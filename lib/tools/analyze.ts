@@ -48,22 +48,56 @@ import { z } from "zod";
  *   - For this assessment, local execution is fine
  */
 
+import { spawnSync } from "child_process";
+
 export const analyzeTool = tool({
   description:
     "Execute Python code for data analysis, calculations, or processing. The LLM writes Python code, and this tool runs it and returns the output.",
   parameters: z.object({
-    // TODO: Define your parameters here
-    // Example:
-    // code: z.string().describe("Python code to execute"),
+    code: z.string().describe("Python code to execute"),
   }),
-  execute: async (params) => {
-    // TODO: Implement the Python code execution logic
-    // 1. Extract the code from params
-    // 2. Execute it with python3
-    // 3. Return stdout, stderr, and exit code
+  execute: async ({ code }) => {
+    try {
+      const result = spawnSync( //avoid infinite loop
+        "python",
+        ["-c", "import sys; exec(sys.stdin.read())"],
+        {
+          input: code,
+          encoding: "utf-8",
+          timeout: 10_000,
+          maxBuffer: 10 * 1024 * 1024,
+        }
+      );
 
-    return {
-      error: "Analysis tool not implemented yet. See TODO comments in lib/tools/analyze.ts",
-    };
+      //10 seconds timeout
+      if (result.error) {
+        if ((result.error as any).code === "ETIMEDOUT") {
+          return { error: "Execution timed out (limit: 10 seconds)" };
+        }
+        return { error: `Execution failed: ${result.error.message}` };
+      }
+
+      //stdout & stderr
+      if (result.status !== 0) {
+        return {
+          stdout: result.stdout,
+          stderr: result.stderr || "Unknown error occurred",
+          exitCode: result.status ?? -1,
+          error: "Python script exited with error",
+        };
+      }
+
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.status ?? 0,
+      };
+    } catch (error) {
+      console.error("Analysis tool error:", error);
+      return {
+        error:
+          error instanceof Error ? error.message : "Analysis failed due to an unknown error",
+      };
+    }
   },
 });
