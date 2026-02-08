@@ -39,23 +39,99 @@ import { z } from "zod";
  *   - Keep the return format simple — the LLM will format it for the user
  */
 
+const DEFAULT_DAILY_VARS = [
+  "temperature_2m_max",
+  "temperature_2m_min",
+  "precipitation_sum",
+  "windspeed_10m_max",
+  "weathercode",
+] as const;
+
 export const weatherTool = tool({
   description:
     "Get weather forecast data for a location. Use this when the user asks about weather, temperature, rain, wind, or forecasts for any location.",
   parameters: z.object({
-    // TODO: Define your parameters here
-    // Example:
-    // latitude: z.number().describe("Latitude of the location"),
-    // longitude: z.number().describe("Longitude of the location"),
+    latitude: z
+      .number()
+      .min(-90)
+      .max(90)
+      .describe("Latitude of the location in decimal degrees (-90 to 90)."),
+    longitude: z
+      .number()
+      .min(-180)
+      .max(180)
+      .describe(
+        "Longitude of the location in decimal degrees (-180 to 180)."
+      ),
+    forecast_days: z
+      .number()
+      .int()
+      .min(1)
+      .max(7)
+      .default(3)
+      .describe("Number of days to forecast (1–7). Defaults to 3."),
+    daily: z
+      .array(
+        z.enum([
+          "temperature_2m_max",
+          "temperature_2m_min",
+          "precipitation_sum",
+          "windspeed_10m_max",
+          "weathercode",
+        ])
+      )
+      .optional()
+      .describe(
+        "Daily weather variables to include. Defaults to a useful set of common variables."
+      ),
   }),
-  execute: async (params) => {
-    // TODO: Implement the weather data fetching logic
-    // 1. Build the API URL with query parameters
-    // 2. Fetch data from Open-Meteo
-    // 3. Return the parsed response
+  execute: async ({ latitude, longitude, forecast_days = 3, daily }) => {
+    try {
 
-    return {
-      error: "Weather tool not implemented yet. See TODO comments in lib/tools/weather.ts",
-    };
+      const dailyVars =
+        daily && daily.length > 0
+          ? daily
+          : (DEFAULT_DAILY_VARS as unknown as string[]);
+
+      const params = new URLSearchParams({
+        latitude: latitude.toString(),
+        longitude: longitude.toString(),
+        forecast_days: forecast_days.toString(),
+        timezone: "auto",
+        daily: dailyVars.join(","),
+      });
+
+      const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(
+          `Weather API error: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const data = await response.json();
+
+      return {
+        source: "open-meteo",
+        query: {
+          latitude,
+          longitude,
+          forecast_days,
+          daily: dailyVars,
+        },
+        units: data.daily_units ?? null,
+        daily: data.daily ?? null,
+      };
+    } catch (error) {
+      console.error("Weather tool error:", error);
+      return {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Checking weather failed due to an unknown error.",
+      };
+    }
   },
 });
